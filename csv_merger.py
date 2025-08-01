@@ -188,19 +188,19 @@ class CSVMerger:
         file_size = os.path.getsize(self.negotiate_file)
         estimated_rows = file_size // 200  # 1行あたり約200バイトと仮定
         
-        # 最初のチャンクでヘッダーを取得
-        first_chunk = pd.read_csv(self.negotiate_file, encoding=encoding, nrows=1, dtype=str)
-        columns = list(first_chunk.columns)
+        # 最初の行を読んでヘッダーの有無を確認
+        first_chunk = pd.read_csv(self.negotiate_file, encoding=encoding, nrows=1, dtype=str, header=None)
         
-        # Column2の位置を確認（0ベースで1がColumn2）
-        if len(columns) < 2:
+        # カラム数を確認
+        num_columns = len(first_chunk.columns)
+        if num_columns < 2:
             raise ValueError("交渉履歴CSVには最低2列必要です")
         
         # 会員番号列を挿入する位置を決定（Column2の右隣 = インデックス2）
         insert_position = 2
         
-        # 出力用の列構成を作成
-        output_columns = columns[:insert_position] + ['会員番号'] + columns[insert_position:]
+        # 出力用の列構成を作成（ヘッダーなし）
+        output_columns = list(range(insert_position)) + ['member_no'] + list(range(insert_position, num_columns))
         
         # チャンク処理
         start_time = time.time()
@@ -211,28 +211,28 @@ class CSVMerger:
                 self.negotiate_file, 
                 encoding=encoding, 
                 chunksize=self.chunk_size,
-                dtype=str
+                dtype=str,
+                header=None  # ヘッダーなしとして読み込み
             )):
                 self.logger.info(f"チャンク {chunk_num + 1} 処理中 ({len(chunk)}行)")
                 
-                # 管理番号（Column2）で会員番号を検索
-                manage_no_col = chunk.columns[1]  # Column2
-                chunk['会員番号'] = chunk[manage_no_col].apply(
+                # 管理番号（Column2 = インデックス1）で会員番号を検索
+                chunk['member_no'] = chunk[1].apply(
                     lambda x: contract_dict.get(str(x).strip(), '') if pd.notna(x) else ''
                 )
                 
                 # マッチング統計
-                matched = chunk['会員番号'].notna() & (chunk['会員番号'] != '')
+                matched = chunk['member_no'].notna() & (chunk['member_no'] != '')
                 self.stats['matched_rows'] += matched.sum()
                 self.stats['unmatched_rows'] += (~matched).sum()
                 self.stats['total_rows'] += len(chunk)
                 
-                # 列の順序を調整
-                chunk = chunk[output_columns]
+                # 列の順序を調整（数値インデックスを使用）
+                chunk = chunk[[0, 1, 'member_no'] + list(range(2, num_columns))]
                 
                 # 出力ファイルに追記
                 mode = 'w' if not first_chunk_written else 'a'
-                header = not first_chunk_written
+                header = False  # ヘッダーなしで出力
                 
                 chunk.to_csv(
                     self.output_file,
